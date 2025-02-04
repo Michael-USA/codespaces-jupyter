@@ -1,19 +1,18 @@
 {
-  "image": "mcr.microsoft.com/devcontainers/universal:2",
+  "image": "sagemath/sagemath:latest",
   "hostRequirements": {
     "cpus": 4
   },
   "waitFor": "onCreateCommand",
-  "updateContentCommand": "python3 -m pip install -r requirements.txt",
-  "postCreateCommand": "",
+  "updateContentCommand": "sage -pip install -r requirements.txt",
+  "postCreateCommand": "sage -sh -c 'jupyter kernelspec install --user /usr/share/sagemath/kernel'",
   "customizations": {
     "codespaces": {
       "openFiles": []
     },
     "vscode": {
       "extensions": [
-        "ms-toolsai.jupyter",
-        "ms-python.python"
+        "ms-toolsai.jupyter"
       ]
     }
   }
