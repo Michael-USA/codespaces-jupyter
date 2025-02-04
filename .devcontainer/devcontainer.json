@@ -5,7 +5,7 @@
   },
   "waitFor": "onCreateCommand",
   "updateContentCommand": "sage -pip install -r requirements.txt",
-  "postCreateCommand": "sage -sh -c 'jupyter kernelspec install --user /usr/share/sagemath/kernel'",
+  "postCreateCommand": "",
   "customizations": {
     "codespaces": {
       "openFiles": []
