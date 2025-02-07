@@ -12,7 +12,7 @@
     "vscode": {
       "extensions": [
         "ms-toolsai.jupyter",
-        "ms-python.python"
+        "Lov3.sagemath-enhanced"
       ]
     }
   }
