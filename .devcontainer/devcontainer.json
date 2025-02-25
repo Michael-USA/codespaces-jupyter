@@ -12,7 +12,8 @@
     "vscode": {
       "extensions": [
         "ms-toolsai.jupyter",
-        "Lov3.sagemath-enhanced"
+        "Lov3.sagemath-enhanced",
+        "github.vscode-pull-request-github"
       ]
     }
   }
