@@ -1,0 +1,51 @@
+name: Convert Jupyter Notebooks to HTML & Deploy to GitHub Pages
+
+on:
+  push:
+    branches:
+      - gh-pages
+
+jobs:
+  convert-and-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Jupyter
+        run: pip install jupyter
+
+      - name: Convert Jupyter Notebooks to HTML
+        run: |
+          mkdir -p pages
+          jupyter nbconvert --to html notebooks/*.ipynb --output-dir pages
+
+      - name: Generate Index Page
+        run: |
+          echo "<html><body><h1>Jupyter Notebooks</h1><ul>" > pages/index.html
+          for file in pages/*.html; do
+            filename=$(basename "$file")
+            echo "<li><a href='$filename'>$filename</a></li>" >> pages/index.html
+          done
+          echo "</ul></body></html>" >> pages/index.html
+
+      - name: Commit converted HTML files
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git add pages/
+          git commit -m "Auto-converted Jupyter Notebooks to HTML" || echo "No changes to commit"
+          git push origin gh-pages
+
+      - name: Deploy to GitHub Pages
+        uses: JamesIves/github-pages-deploy-action@v4
+        with:
+          branch: gh-pages
+          folder: pages
+          clean: false
