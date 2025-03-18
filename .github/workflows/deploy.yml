@@ -24,7 +24,8 @@ jobs:
       - name: Convert Jupyter Notebooks to HTML
         run: |
           mkdir -p pages
-          jupyter nbconvert --to html notebooks/*.ipynb --output-dir pages
+          jupyter nbconvert --to html notebooks/*.ipynb --output-dir=pages
+          find notebooks -name "*.html" -delete  # Delete extra HTML files in notebooks/
 
       - name: Generate Index Page
         run: |
