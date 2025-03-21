@@ -38,9 +38,20 @@ jobs:
           echo "<html><body><h1>Jupyter Notebooks</h1><ul>" > docs/index.html
           for file in docs/*.html; do
             filename=$(basename "$file")
-            echo "<li><a href='$filename'>$filename</a></li>" >> docs/index.html
+            if [ "$filename" != "index.html" ]; then
+              echo "<li><a href='$filename'>$filename</a></li>" >> docs/index.html
+            fi
           done
           echo "</ul></body></html>" >> docs/index.html
+
+      - name: Add Back Button to HTML Pages
+        run: |
+          for file in docs/*.html; do
+            filename=$(basename "$file")
+            if [ "$filename" != "index.html" ]; then
+              sed -i '1i <button onclick="location.href=\'index.html\'">Back to Index</button><br><br>' "$file"
+            fi
+          done
 
       - name: Commit converted HTML files
         run: |
