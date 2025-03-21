@@ -52,5 +52,5 @@ jobs:
         with:
           branch: gh-pages
           folder: docs
-          target-folder: /
+          target-folder: docs
           clean: false
