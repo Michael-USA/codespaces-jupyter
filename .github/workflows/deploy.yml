@@ -7,8 +7,6 @@ on:
     paths:
       - 'notebooks/**'
       - '.github/workflows/deploy.yml'
-    paths-ignore:
-      - 'docs/**'
   workflow_dispatch:  
 
 jobs:
