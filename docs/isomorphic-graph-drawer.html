@@ -346,22 +346,51 @@ print("Python environment loaded.")
 
         // Highlight edges connected to hoveredVertex
         if (hoveredVertex !== null) {
-            let mappedVertex = isomorphismMapping ? isomorphismMapping[hoveredVertex] : null;
+            highlightedEdges.clear(); // Clear previous highlights
+            let mappedVertex = null;
 
+            if (isomorphismMapping) {
+                // Check forward mapping (G1 -> G2)
+                if (isomorphismMapping[hoveredVertex] !== undefined) {
+                    mappedVertex = isomorphismMapping[hoveredVertex];
+                } else {
+                    // Check reverse mapping (G2 -> G1)
+                    for (const [key, value] of Object.entries(isomorphismMapping)) {
+                        if (parseInt(value) === hoveredVertex) {
+                            mappedVertex = parseInt(key);
+                            break;
+                        }
+                    }
+                }
+            }
+
+            // Highlight edges connected to the hovered vertex
             edges.forEach(([i, j]) => {
                 if (i === hoveredVertex || j === hoveredVertex) {
-                    highlightedEdges.add([i, j]);
-                }
-                if (mappedVertex !== null && (i === mappedVertex || j === mappedVertex)) {
-                    highlightedEdges.add([i, j]);
+                    highlightedEdges.add(`${i}-${j}`);
+                    highlightedEdges.add(`${j}-${i}`);
                 }
             });
+
+            // Highlight edges connected to the mapped vertex (if any)
+            if (mappedVertex !== null) {
+                edges.forEach(([i, j]) => {
+                    if (i === mappedVertex || j === mappedVertex) {
+                        highlightedEdges.add(`${i}-${j}`);
+                        highlightedEdges.add(`${j}-${i}`);
+                    }
+                });
+            }
         }
 
         // Draw edges
         edges.forEach(([i, j]) => {
-            ctx.strokeStyle = highlightedEdges.has([i, j]) || highlightedEdges.has([j, i]) ? "lightblue" : "black";
-            ctx.lineWidth = highlightedEdges.has([i, j]) || highlightedEdges.has([j, i]) ? 4 : 2;
+            const edgeKey1 = `${i}-${j}`;
+            const edgeKey2 = `${j}-${i}`;
+            const isHighlighted = highlightedEdges.has(edgeKey1) || highlightedEdges.has(edgeKey2);
+
+            ctx.strokeStyle = isHighlighted ? "lightblue" : "black";
+            ctx.lineWidth = isHighlighted ? 4 : 2;
             let [x1, y1] = vertices[i];
             let [x2, y2] = vertices[j];
             ctx.beginPath();
@@ -388,7 +417,7 @@ print("Python environment loaded.")
     }
 
     // Handles drawing G1 or G2
-    function drawSavedGraph(canvas, hoveredVertex, isG1) {
+    function drawSavedGraph(canvas, localHovered, remoteHovered, isG1) {
         let ctx = canvas.getContext("2d");
         ctx.clearRect(0, 0, canvas.width, canvas.height);
 
@@ -397,41 +426,47 @@ print("Python environment loaded.")
 
         if (graphVertices.length === 0) {
             console.log("No saved graph data, skipping draw.");
-            return; // Prevent clearing if no saved graph exists
+            return;
         }
 
         let scaleX = canvas.width / 800;
         let scaleY = canvas.height / 500;
 
-        let mappedVertex = isomorphismMapping && hoveredVertex !== null
-            ? (isG1 ? isomorphismMapping[hoveredVertex] : Object.keys(isomorphismMapping).find(key => isomorphismMapping[key] == hoveredVertex))
-            : null;
+        let highlightVertex = null;
+        if (localHovered !== null) {
+            highlightVertex = localHovered;
+        } else if (remoteHovered !== null && isomorphismMapping) {
+            if (isG1) {
+                let key = Object.keys(isomorphismMapping).find(k => isomorphismMapping[k] == remoteHovered);
+                if (key !== undefined) {
+                    highlightVertex = parseInt(key);
+                }
+            } else {
+                highlightVertex = isomorphismMapping[remoteHovered] !== undefined ? isomorphismMapping[remoteHovered] : null;
+            }
+        }
 
+        // Draw edges
         graphEdges.forEach(([i, j]) => {
             let [x1, y1] = graphVertices[i];
             let [x2, y2] = graphVertices[j];
-            x1 *= scaleX;
-            y1 *= scaleY;
-            x2 *= scaleX;
-            y2 *= scaleY;
+            x1 *= scaleX; y1 *= scaleY;
+            x2 *= scaleX; y2 *= scaleY;
 
-            let shouldHighlight =
-                (i === hoveredVertex || j === hoveredVertex ||
-                    i == mappedVertex || j == mappedVertex) && mappedVertex !== undefined;
+            let shouldHighlight = highlightVertex !== null && (i === highlightVertex || j === highlightVertex);
 
             ctx.strokeStyle = shouldHighlight ? "lightblue" : "black";
             ctx.lineWidth = shouldHighlight ? 4 : 2;
-
             ctx.beginPath();
             ctx.moveTo(x1, y1);
             ctx.lineTo(x2, y2);
             ctx.stroke();
         });
 
+        // Draw vertices
         graphVertices.forEach(([x, y], i) => {
-            x *= scaleX;
-            y *= scaleY;
-            ctx.fillStyle = (i === hoveredVertex || i == mappedVertex) ? "lightblue" : "black";
+            x *= scaleX; y *= scaleY;
+            ctx.fillStyle = (i === highlightVertex) ? "lightblue" : "black";
             ctx.beginPath();
             ctx.arc(x, y, 8, 0, 2 * Math.PI);
             ctx.fill();
@@ -463,10 +498,10 @@ print("Python environment loaded.")
 
             if (isomorphismMapping && isomorphismMapping[draggingVertexG1] !== undefined) {
                 let mappedVertex = isomorphismMapping[draggingVertexG1];
-                drawSavedGraph(savedG1Canvas, draggingVertexG1, true);
-                drawSavedGraph(savedG2Canvas, mappedVertex, false);
+                drawSavedGraph(savedG1Canvas, draggingVertexG1, hoveredVertexG2, true);
+                drawSavedGraph(savedG2Canvas, hoveredVertexG2, draggingVertexG1, false);
             } else {
-                drawSavedGraph(savedG1Canvas, null, true);
+                drawSavedGraph(savedG1Canvas, null, null, true);
             }
             return;
         }
@@ -476,11 +511,11 @@ print("Python environment loaded.")
 
             if (isomorphismMapping && isomorphismMapping[hoveredVertexG1] !== undefined) {
                 let mappedVertex = isomorphismMapping[hoveredVertexG1];
-                drawSavedGraph(savedG1Canvas, hoveredVertexG1, true);
-                drawSavedGraph(savedG2Canvas, mappedVertex, false);
+                drawSavedGraph(savedG1Canvas, hoveredVertexG1, hoveredVertexG2, true);
+                drawSavedGraph(savedG2Canvas, hoveredVertexG2, hoveredVertexG1, false);
             } else {
-                drawSavedGraph(savedG1Canvas, null, true);
-                drawSavedGraph(savedG2Canvas, null, false);
+                drawSavedGraph(savedG1Canvas, null, null, true);
+                drawSavedGraph(savedG2Canvas, null, null, false);
             }
         }
     });
@@ -512,11 +547,14 @@ print("Python environment loaded.")
             if (isomorphismMapping) {
                 let mappedVertex = Object.keys(isomorphismMapping).find(key => isomorphismMapping[key] == draggingVertexG2);
                 if (mappedVertex !== undefined) {
-                    drawSavedGraph(savedG2Canvas, draggingVertexG2, false);
-                    drawSavedGraph(savedG1Canvas, parseInt(mappedVertex), true);
+                    drawSavedGraph(savedG2Canvas, draggingVertexG2, hoveredVertexG1, false);
+                    drawSavedGraph(savedG1Canvas, parseInt(mappedVertex), draggingVertexG2, true);
+                } else {
+                    drawSavedGraph(savedG2Canvas, draggingVertexG2, hoveredVertexG1, false);
+                    drawSavedGraph(savedG1Canvas, hoveredVertexG1, null, true);
                 }
             } else {
-                drawSavedGraph(savedG2Canvas, null, false);
+                drawSavedGraph(savedG2Canvas, draggingVertexG2, hoveredVertexG1, false);
             }
             return;
         }
@@ -527,15 +565,18 @@ print("Python environment loaded.")
             if (isomorphismMapping) {
                 let mappedVertex = Object.keys(isomorphismMapping).find(key => isomorphismMapping[key] == hoveredVertexG2);
                 if (mappedVertex !== undefined) {
-                    drawSavedGraph(savedG2Canvas, hoveredVertexG2, false);
-                    drawSavedGraph(savedG1Canvas, parseInt(mappedVertex), true);
+                    drawSavedGraph(savedG2Canvas, hoveredVertexG2, hoveredVertexG1, false);
+                    drawSavedGraph(savedG1Canvas, parseInt(mappedVertex), hoveredVertexG2, true);
                 } else {
-                    drawSavedGraph(savedG2Canvas, null, false);
-                    drawSavedGraph(savedG1Canvas, null, true);
+                    drawSavedGraph(savedG2Canvas, hoveredVertexG2, hoveredVertexG1, false);
+                    drawSavedGraph(savedG1Canvas, hoveredVertexG1, null, true);
                 }
+            } else {
+                drawSavedGraph(savedG2Canvas, hoveredVertexG2, hoveredVertexG1, false);
             }
         }
     });
+
 
     savedG2Canvas.addEventListener("mouseup", function() {
         draggingVertexG2 = null;
