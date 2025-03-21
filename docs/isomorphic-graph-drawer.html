@@ -1,0 +1,573 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Isomorphic Graph Drawer</title>
+    <script src="https://cdn.jsdelivr.net/pyodide/v0.23.4/full/pyodide.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            text-align: center;
+            background-color: #f4f4f4;
+            margin: 0;
+            padding: 20px;
+        }
+        h2 {
+            color: #333;
+        }
+        .container {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 10px;
+        }
+        canvas {
+            background-color: white;
+            border: 2px solid black;
+            cursor: pointer;
+            touch-action: none;
+        }
+        .button-container {
+            display: flex;
+            gap: 10px;
+            margin-top: 10px;
+        }
+        button {
+            padding: 10px 15px;
+            border: none;
+            cursor: pointer;
+            font-size: 14px;
+            border-radius: 5px;
+            background-color: #007BFF;
+            color: white;
+        }
+        button:hover {
+            background-color: #0056b3;
+        }
+        button:disabled {
+            cursor: not-allowed;
+        }
+        pre {
+            background-color: #fff;
+            padding: 10px;
+            border-radius: 5px;
+            text-align: left;
+            width: 80%;
+            max-width: 600px;
+        }
+    </style>
+</head>
+<body>
+
+<h2>Interactive Graph Editor</h2>
+
+<div class="container">
+    <canvas id="graphCanvas" width="800" height="500"></canvas>
+    <div class="button-container">
+        <button onclick="runPython('clear_graph')">Clear Graph</button>
+        <button onclick="saveCanvas('G1')">Save as G1</button>
+        <button onclick="saveCanvas('G2')">Save as G2</button>
+        <button id="checkIsomorphismBtn" onclick="runPython('check_isomorphism')">Check Isomorphism</button>
+    </div>
+    <pre id="output"></pre>
+
+    <div class="saved-container" style="display: flex; gap: 30px; justify-content: center;">
+        <div>
+            <h4>Saved G1</h4>
+            <canvas id="savedG1" width="600" height="375"></canvas>
+        </div>
+        <div>
+            <h4>Saved G2</h4>
+            <canvas id="savedG2" width="600" height="375"></canvas>
+        </div>
+    </div>
+</div>
+
+<script>
+    let pyodideReady = false;
+    let vertices = [];
+    let edges = [];
+    let selectedVertex = null;
+    let draggingVertex = null;
+    let draggingVertexG1 = null;
+    let draggingVertexG2 = null;
+    let startX = 0, startY = 0, hasMoved = false;
+    let isomorphismMapping = null;
+    let hoveredVertex = null;
+    let hoveredVertexG1 = null;
+    let hoveredVertexG2 = null;
+    let canvas = document.getElementById("graphCanvas");
+    let savedG1Canvas = document.getElementById("savedG1");
+    let savedG2Canvas = document.getElementById("savedG2");
+    let G1_vertices = [];
+    let G1_edges = [];
+    let G2_vertices = [];
+    let G2_edges = [];
+
+    async function loadPyodideAndPackages() {
+        window.pyodide = await loadPyodide();
+        await pyodide.loadPackage(["matplotlib", "networkx", "numpy"]);
+        await pyodide.runPythonAsync(`
+import networkx as nx
+import numpy as np
+import matplotlib.pyplot as plt
+import json
+
+vertices = []
+edges = []
+G1 = None
+G2 = None
+GM = None
+
+def clear_graph():
+    global vertices, edges
+    vertices = []
+    edges = []
+    print("Graph cleared.")
+
+def save_graph(graph_name):
+    global G1, G2
+    G = nx.Graph()
+
+    # Convert JavaScript-style index positions to Python's dictionary format
+    pos = {i: (x, y) for i, (x, y) in enumerate(vertices)}
+
+    for i, (x, y) in enumerate(vertices):
+        G.add_node(i, pos=(x, y))
+
+    for i, j in edges:
+        G.add_edge(i, j)
+
+    if graph_name == "G1":
+        G1 = G
+        print("Graph saved as G1.")
+    elif graph_name == "G2":
+        G2 = G
+        print("Graph saved as G2.")
+
+def check_isomorphism():
+    global GM, G1, G2
+    if G1 is None or G2 is None:
+        print("Both G1 and G2 must be saved first.")
+        return None
+
+    GM = nx.algorithms.isomorphism.GraphMatcher(G1, G2)
+    if GM.is_isomorphic():
+        print("Graphs are isomorphic!")
+        mapping_str_keys = {str(k): v for k, v in GM.mapping.items()}
+        return json.dumps(mapping_str_keys)
+    else:
+        print("Graphs are NOT isomorphic.")
+        return None
+
+def sync_graph_to_python(js_vertices, js_edges):
+    global vertices, edges
+    vertices = js_vertices
+    edges = js_edges
+
+print("Python environment loaded.")
+        `);
+        pyodideReady = true;
+    }
+    loadPyodideAndPackages();
+
+    function saveCanvas(target) {
+        let previousSelected = selectedVertex;
+        selectedVertex = null;
+
+        drawGraph();
+
+        let sourceCanvas = document.getElementById("graphCanvas");
+        let targetCanvas = document.getElementById(target === 'G1' ? 'savedG1' : 'savedG2');
+        let targetCtx = targetCanvas.getContext("2d");
+
+        targetCtx.clearRect(0, 0, targetCanvas.width, targetCanvas.height);
+        targetCtx.drawImage(sourceCanvas, 0, 0, targetCanvas.width, targetCanvas.height);
+
+        selectedVertex = previousSelected;
+        drawGraph();
+
+        isomorphismMapping = null;
+
+        if (checkIsomorphismBtn) {
+            checkIsomorphismBtn.disabled = false;
+            checkIsomorphismBtn.style.opacity = "1";
+        }
+
+        document.getElementById("checkIsomorphismBtn").disabled = false;
+        document.getElementById("checkIsomorphismBtn").style.opacity = "1";
+
+        syncGraphToPython().then(() => {
+            runPython("save_graph", target);
+
+            if (target === "G1") {
+                G1_vertices = JSON.parse(JSON.stringify(vertices));
+                G1_edges = JSON.parse(JSON.stringify(edges));
+            } else if (target === "G2") {
+                G2_vertices = JSON.parse(JSON.stringify(vertices));
+                G2_edges = JSON.parse(JSON.stringify(edges));
+            }
+        });
+    }
+
+    // Run code in python
+    async function runPython(command, arg = undefined) {
+        if (!pyodideReady) return alert("Python is still loading...");
+        let commandStr = arg !== undefined ? `${command}('${arg}')` : `${command}()`;
+        try {
+            let result = await pyodide.runPythonAsync(commandStr);
+
+            console.log("Check Isomorphism Result:", result);  // Debugging
+
+            document.getElementById("output").innerText = result || "Command executed.";
+
+            if (command === "check_isomorphism") {
+                if (result && result !== "None") {
+                    isomorphismMapping = JSON.parse(result);
+
+                    let formattedMapping = Object.keys(isomorphismMapping)
+                        .sort((a, b) => parseInt(a) - parseInt(b))
+                        .map(key => `(G1) Vertex ${key} → (G2) Vertex ${isomorphismMapping[key]}`)
+                        .join("\n");
+
+                    document.getElementById("output").innerText =
+                        "Graphs are isomorphic!\n\nIsomorphic Mapping:\n" + formattedMapping;
+                } else {
+                    isomorphismMapping = null;
+                    document.getElementById("output").innerText = "Graphs are NOT isomorphic.";
+                }
+
+                if (checkIsomorphismBtn) {
+                    checkIsomorphismBtn.disabled = true;
+                    checkIsomorphismBtn.style.opacity = "0.5";
+                }
+            } else {
+                document.getElementById("output").innerText = result || "Command executed.";
+            }
+
+            if (command === "clear_graph") {
+                vertices = [];
+                edges = [];
+                selectedVertex = null;
+                drawGraph();
+            }
+        } catch (err) {
+            document.getElementById("output").innerText = "Error: " + err;
+        }
+    }
+
+    async function syncGraphToPython() {
+        if (!pyodideReady) return;
+        await pyodide.runPythonAsync(`sync_graph_to_python(${JSON.stringify(vertices)}, ${JSON.stringify(edges)})`);
+    }
+
+    function handleMouseUp(event) {
+        canvas.removeEventListener("mousemove", dragVertex);
+
+        if (!hasMoved) {
+            let rect = canvas.getBoundingClientRect();
+            let x = event.clientX - rect.left;
+            let y = event.clientY - rect.top;
+            let nearest = findNearestVertex(x, y);
+
+            if (nearest !== null) {
+                if (nearest === selectedVertex) {
+                    // If clicking the already selected vertex, unselect it
+                    selectedVertex = null;
+                } else if (selectedVertex === null) {
+                    // If no vertex was selected, select this one
+                    selectedVertex = nearest;
+                } else {
+                    // If selecting a different vertex, check for an existing edge
+                    let edgeIndex = edges.findIndex(([a, b]) =>
+                        (a === selectedVertex && b === nearest) || (b === selectedVertex && a === nearest)
+                    );
+
+                    if (edgeIndex !== -1) {
+                        edges.splice(edgeIndex, 1);  // Remove edge if it exists
+                    } else {
+                        edges.push([selectedVertex, nearest]); // Create edge if it doesn't exist
+                    }
+
+                    selectedVertex = nearest;
+                }
+            }
+        }
+        draggingVertex = null;
+        drawGraph();
+    }
+
+    // Used to find the nearest vertex in the main canvas relative to the mouse
+    function findNearestVertex(x, y) {
+        for (let i = 0; i < vertices.length; i++) {
+            let [vx, vy] = vertices[i];
+            if (Math.sqrt((vx - x) ** 2 + (vy - y) ** 2) < 10) {
+                return i;
+            }
+        }
+        return null;
+    }
+
+    // Used to find the nearest vertex in G1 or G2 relative to the mouse
+    function findNearestVertexInCanvas(x, y, canvasWidth, canvasHeight, graphVertices) {
+        let scaleX = canvasWidth / 800;
+        let scaleY = canvasHeight / 500;
+        for (let i = 0; i < graphVertices.length; i++) {
+            let [vx, vy] = graphVertices[i];
+            let scaledX = vx * scaleX;
+            let scaledY = vy * scaleY;
+            if (Math.sqrt((scaledX - x) ** 2 + (scaledY - y) ** 2) < 10) {
+                return i;
+            }
+        }
+        return null;
+    }
+
+    // Function for dragging vertices in the main canvas
+    function dragVertex(event) {
+        let rect = canvas.getBoundingClientRect();
+        let x = event.clientX - rect.left;
+        let y = event.clientY - rect.top;
+
+        if (draggingVertex !== null) {
+            vertices[draggingVertex] = [x, y];
+            hasMoved = true;
+            drawGraph();
+        }
+    }
+
+    // Handles drawing the main canvas
+    function drawGraph() {
+        let ctx = canvas.getContext("2d");
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        let highlightedEdges = new Set();
+
+        // Highlight edges connected to hoveredVertex
+        if (hoveredVertex !== null) {
+            let mappedVertex = isomorphismMapping ? isomorphismMapping[hoveredVertex] : null;
+
+            edges.forEach(([i, j]) => {
+                if (i === hoveredVertex || j === hoveredVertex) {
+                    highlightedEdges.add([i, j]);
+                }
+                if (mappedVertex !== null && (i === mappedVertex || j === mappedVertex)) {
+                    highlightedEdges.add([i, j]);
+                }
+            });
+        }
+
+        // Draw edges
+        edges.forEach(([i, j]) => {
+            ctx.strokeStyle = highlightedEdges.has([i, j]) || highlightedEdges.has([j, i]) ? "lightblue" : "black";
+            ctx.lineWidth = highlightedEdges.has([i, j]) || highlightedEdges.has([j, i]) ? 4 : 2;
+            let [x1, y1] = vertices[i];
+            let [x2, y2] = vertices[j];
+            ctx.beginPath();
+            ctx.moveTo(x1, y1);
+            ctx.lineTo(x2, y2);
+            ctx.stroke();
+        });
+
+        // Draw vertices
+        vertices.forEach(([x, y], i) => {
+            if (i === selectedVertex) {
+                ctx.fillStyle = "green";  // Selected vertex in GREEN
+            } else {
+                ctx.fillStyle = "black";
+            }
+
+            ctx.beginPath();
+            ctx.arc(x, y, 8, 0, 2 * Math.PI);
+            ctx.fill();
+            ctx.fillStyle = "black";
+            ctx.font = "15px Arial";
+            ctx.fillText(i, x + 10, y + 5);
+        });
+    }
+
+    // Handles drawing G1 or G2
+    function drawSavedGraph(canvas, hoveredVertex, isG1) {
+        let ctx = canvas.getContext("2d");
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        let graphVertices = isG1 ? G1_vertices : G2_vertices;
+        let graphEdges = isG1 ? G1_edges : G2_edges;
+
+        if (graphVertices.length === 0) {
+            console.log("No saved graph data, skipping draw.");
+            return; // Prevent clearing if no saved graph exists
+        }
+
+        let scaleX = canvas.width / 800;
+        let scaleY = canvas.height / 500;
+
+        let mappedVertex = isomorphismMapping && hoveredVertex !== null
+            ? (isG1 ? isomorphismMapping[hoveredVertex] : Object.keys(isomorphismMapping).find(key => isomorphismMapping[key] == hoveredVertex))
+            : null;
+
+        graphEdges.forEach(([i, j]) => {
+            let [x1, y1] = graphVertices[i];
+            let [x2, y2] = graphVertices[j];
+            x1 *= scaleX;
+            y1 *= scaleY;
+            x2 *= scaleX;
+            y2 *= scaleY;
+
+            let shouldHighlight =
+                (i === hoveredVertex || j === hoveredVertex ||
+                    i == mappedVertex || j == mappedVertex) && mappedVertex !== undefined;
+
+            ctx.strokeStyle = shouldHighlight ? "lightblue" : "black";
+            ctx.lineWidth = shouldHighlight ? 4 : 2;
+
+            ctx.beginPath();
+            ctx.moveTo(x1, y1);
+            ctx.lineTo(x2, y2);
+            ctx.stroke();
+        });
+
+        graphVertices.forEach(([x, y], i) => {
+            x *= scaleX;
+            y *= scaleY;
+            ctx.fillStyle = (i === hoveredVertex || i == mappedVertex) ? "lightblue" : "black";
+            ctx.beginPath();
+            ctx.arc(x, y, 8, 0, 2 * Math.PI);
+            ctx.fill();
+            ctx.fillStyle = "black";
+            ctx.font = "15px Arial";
+            ctx.fillText(i, x + 10, y + 5);
+        });
+    }
+
+    // ------------------ G1 Canvas Events  ------------------ \\
+
+    savedG1Canvas.addEventListener("mousedown", function(event) {
+        let rect = savedG1Canvas.getBoundingClientRect();
+        let x = event.clientX - rect.left;
+        let y = event.clientY - rect.top;
+        draggingVertexG1 = findNearestVertexInCanvas(x, y, savedG1Canvas.width, savedG1Canvas.height, G1_vertices);
+    });
+
+    savedG1Canvas.addEventListener("mousemove", function(event) {
+        let rect = savedG1Canvas.getBoundingClientRect();
+        let x = event.clientX - rect.left;
+        let y = event.clientY - rect.top;
+        let newHoveredVertexG1 = findNearestVertexInCanvas(x, y, savedG1Canvas.width, savedG1Canvas.height, G1_vertices);
+
+        if (draggingVertexG1 !== null) {
+            let scaleX = 800 / savedG1Canvas.width;
+            let scaleY = 500 / savedG1Canvas.height;
+            G1_vertices[draggingVertexG1] = [x * scaleX, y * scaleY];
+
+            if (isomorphismMapping && isomorphismMapping[draggingVertexG1] !== undefined) {
+                let mappedVertex = isomorphismMapping[draggingVertexG1];
+                drawSavedGraph(savedG1Canvas, draggingVertexG1, true);
+                drawSavedGraph(savedG2Canvas, mappedVertex, false);
+            } else {
+                drawSavedGraph(savedG1Canvas, null, true);
+            }
+            return;
+        }
+
+        if (newHoveredVertexG1 !== hoveredVertexG1) {
+            hoveredVertexG1 = newHoveredVertexG1;
+
+            if (isomorphismMapping && isomorphismMapping[hoveredVertexG1] !== undefined) {
+                let mappedVertex = isomorphismMapping[hoveredVertexG1];
+                drawSavedGraph(savedG1Canvas, hoveredVertexG1, true);
+                drawSavedGraph(savedG2Canvas, mappedVertex, false);
+            } else {
+                drawSavedGraph(savedG1Canvas, null, true);
+                drawSavedGraph(savedG2Canvas, null, false);
+            }
+        }
+    });
+
+    savedG1Canvas.addEventListener("mouseup", function() {
+        draggingVertexG1 = null;
+    });
+
+    // ------------------ G2 Canvas Events ------------------ \\
+
+    savedG2Canvas.addEventListener("mousedown", function(event) {
+        let rect = savedG2Canvas.getBoundingClientRect();
+        let x = event.clientX - rect.left;
+        let y = event.clientY - rect.top;
+        draggingVertexG2 = findNearestVertexInCanvas(x, y, savedG2Canvas.width, savedG2Canvas.height, G2_vertices);
+    });
+
+    savedG2Canvas.addEventListener("mousemove", function(event) {
+        let rect = savedG2Canvas.getBoundingClientRect();
+        let x = event.clientX - rect.left;
+        let y = event.clientY - rect.top;
+        let newHoveredVertexG2 = findNearestVertexInCanvas(x, y, savedG2Canvas.width, savedG2Canvas.height, G2_vertices);
+
+        if (draggingVertexG2 !== null) {
+            let scaleX = 800 / savedG2Canvas.width;
+            let scaleY = 500 / savedG2Canvas.height;
+            G2_vertices[draggingVertexG2] = [x * scaleX, y * scaleY];
+
+            if (isomorphismMapping) {
+                let mappedVertex = Object.keys(isomorphismMapping).find(key => isomorphismMapping[key] == draggingVertexG2);
+                if (mappedVertex !== undefined) {
+                    drawSavedGraph(savedG2Canvas, draggingVertexG2, false);
+                    drawSavedGraph(savedG1Canvas, parseInt(mappedVertex), true);
+                }
+            } else {
+                drawSavedGraph(savedG2Canvas, null, false);
+            }
+            return;
+        }
+
+        if (newHoveredVertexG2 !== hoveredVertexG2) {
+            hoveredVertexG2 = newHoveredVertexG2;
+
+            if (isomorphismMapping) {
+                let mappedVertex = Object.keys(isomorphismMapping).find(key => isomorphismMapping[key] == hoveredVertexG2);
+                if (mappedVertex !== undefined) {
+                    drawSavedGraph(savedG2Canvas, hoveredVertexG2, false);
+                    drawSavedGraph(savedG1Canvas, parseInt(mappedVertex), true);
+                } else {
+                    drawSavedGraph(savedG2Canvas, null, false);
+                    drawSavedGraph(savedG1Canvas, null, true);
+                }
+            }
+        }
+    });
+
+    savedG2Canvas.addEventListener("mouseup", function() {
+        draggingVertexG2 = null;
+    });
+
+    // ------------------ Main Canvas Events ------------------ \\
+
+    canvas.addEventListener("mousedown", function (event) {
+        let rect = canvas.getBoundingClientRect();
+        let x = event.clientX - rect.left;
+        let y = event.clientY - rect.top;
+
+        let nearest = findNearestVertex(x, y);
+        hasMoved = false;
+
+        if (nearest !== null) {
+            draggingVertex = nearest;
+            startX = vertices[nearest][0];
+            startY = vertices[nearest][1];
+
+            canvas.addEventListener("mousemove", dragVertex);
+            canvas.addEventListener("mouseup", handleMouseUp);
+        } else {
+            vertices.push([x, y]);
+            selectedVertex = vertices.length - 1;
+            syncGraphToPython();
+            drawGraph();
+
+            // STOP handleMouseUp() from running after creating a vertex
+            canvas.removeEventListener("mouseup", handleMouseUp);
+        }
+    });
+</script>
+</body>
+</html>
