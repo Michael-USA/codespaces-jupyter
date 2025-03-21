@@ -47,7 +47,9 @@ jobs:
           for file in docs/*.html; do
             filename=$(basename "$file")
             if [ "$filename" != "index.html" ]; then
-              sed -i '1i <button onclick="location.href='\''index.html'\''">Back to Index</button><br><br>' "$file"
+              if ! grep -q "Back to Index" "$file"; then
+                sed -i '1i <button onclick="location.href='\''index.html'\''">Back to Index</button><br><br>' "$file"
+              fi
             fi
           done
 
