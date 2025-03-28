@@ -1,4 +1,3 @@
-<button onclick="location.href='index.html'">Back to Index</button><br><br>
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -6,6 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Isomorphic Graph Drawer</title>
     <script src="https://cdn.jsdelivr.net/pyodide/v0.23.4/full/pyodide.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/animejs/3.2.1/anime.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/web-animations-js@2.3.2/web-animations.min.js"></script>
     <style>
         body {
             font-family: Arial, sans-serif;
@@ -70,6 +71,7 @@
         <button onclick="saveCanvas('G1')">Save as G1</button>
         <button onclick="saveCanvas('G2')">Save as G2</button>
         <button id="checkIsomorphismBtn" onclick="runPython('check_isomorphism')">Check Isomorphism</button>
+        <button onclick="deleteVertex()">Delete Vertex</button>
     </div>
     <pre id="output"></pre>
 
@@ -83,10 +85,13 @@
             <canvas id="savedG2" width="600" height="375"></canvas>
         </div>
     </div>
+
+    <div id="animationContainer" style="margin-top:20px;"></div>
 </div>
 
 <script>
     let pyodideReady = false;
+    let isForward = true;
     let vertices = [];
     let edges = [];
     let selectedVertex = null;
@@ -105,6 +110,10 @@
     let G1_edges = [];
     let G2_vertices = [];
     let G2_edges = [];
+    let playButton = null;
+    let globalMapping = null;
+    let globalPosG1 = null;
+    let globalPosG2 = null;
 
     async function loadPyodideAndPackages() {
         window.pyodide = await loadPyodide();
@@ -173,6 +182,165 @@ print("Python environment loaded.")
     }
     loadPyodideAndPackages();
 
+    async function animateIsomorphism(posG1, posG2, mapping, init=false) {
+        if (init) {
+            globalPosG1 = posG1;
+            globalPosG2 = posG2;
+            globalMapping = mapping;
+
+        }
+        const animationContainer = document.getElementById("animationContainer");
+
+        // Check and remove existing canvas to avoid stacking
+        const existingCanvas = document.getElementById("animationCanvas");
+        if (existingCanvas) {
+            existingCanvas.remove();
+        }
+
+        // Create animation canvas
+        let canvas = document.createElement("canvas");
+        canvas.id = "animationCanvas";
+        canvas.width = 600;
+        canvas.height = 375;
+        canvas.style.border = "2px solid black";
+        animationContainer.insertBefore(canvas, playButton ? playButton.parentElement : null);
+
+        createPlayButton();
+
+        const frameCount = 60;
+        const delay = 16;
+
+        const mappedPositions = posG1.map((pos, index) => posG2[mapping[index]]);
+
+        for (let frame = 0; frame <= frameCount; frame++) {
+            const alpha = frame / frameCount;
+
+            const interpolatedPositions = posG1.map((pos, index) => {
+                const [x1, y1] = pos;
+                const [x2, y2] = mappedPositions[index];
+                const x = x1 + alpha * (x2 - x1);
+                const y = y1 + alpha * (y2 - y1);
+                return [x, y];
+            });
+
+            drawInterpolatedGraph(interpolatedPositions, canvas);
+            if (init) { return }
+            await new Promise(resolve => setTimeout(resolve, delay));
+        }
+    }
+
+    function drawInterpolatedGraph(positions, canvas) {
+        let ctx = canvas.getContext("2d");
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        // Scale factors to match the canvas size
+        let scaleX = canvas.width / 800;
+        let scaleY = canvas.height / 500;
+
+        if (isForward) {
+            edges = G1_edges;
+        }
+        else {
+            edges = G2_edges;
+        }
+
+        edges.forEach(([i, j]) => {
+            let [x1, y1] = positions[i];
+            let [x2, y2] = positions[j];
+            x1 *= scaleX;
+            y1 *= scaleY;
+            x2 *= scaleX;
+            y2 *= scaleY;
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.moveTo(x1, y1);
+            ctx.lineTo(x2, y2);
+            ctx.stroke();
+        });
+
+        positions.forEach(([x, y], i) => {
+            x *= scaleX;
+            y *= scaleY;
+            ctx.beginPath();
+            ctx.arc(x, y, 8, 0, 2 * Math.PI);
+            ctx.fill();
+            ctx.fillStyle = "black";
+            ctx.font = "15px Arial";
+            ctx.fillText(i, x + 10, y + 5);
+        });
+    }
+
+
+
+
+    function deleteVertex() {
+        if (selectedVertex === null) {
+            alert("No vertex selected for deletion.");
+            return;
+        }
+
+        // Remove all edges associated with the selected vertex
+        edges = edges.filter(([a, b]) => a !== selectedVertex && b !== selectedVertex);
+
+        // Remove the selected vertex from the list
+        vertices.splice(selectedVertex, 1);
+
+        // Update all edges to reflect the removed vertex label
+        edges = edges.map(([a, b]) => [
+            a > selectedVertex ? a - 1 : a,
+            b > selectedVertex ? b - 1 : b
+        ]);
+
+        // Reset the selected vertex after deletion
+        selectedVertex = null;
+
+        // Redraw the graph after deletion
+        drawGraph();
+        syncGraphToPython();
+    }
+
+    function createPlayButton() {
+        // Check if the button already exists to avoid duplication
+        if (playButton) return;
+
+        const animationContainer = document.getElementById("animationContainer");
+
+        // Create control button
+        let buttonContainer = document.createElement("div");
+        buttonContainer.style.marginTop = "10px";
+        buttonContainer.style.display = "flex";
+        buttonContainer.style.justifyContent = "center";
+        buttonContainer.style.gap = "10px";
+
+        playButton = document.createElement("button");
+        playButton.textContent = "Play";
+        playButton.onclick = async () => {
+
+            // Disable the button during animation
+            playButton.disabled = true;
+            playButton.style.opacity = "0.5";
+
+            // Determine animation direction (G1 to G2 or G2 to G1)
+            const directionMapping = isForward
+                ? globalMapping
+                : Object.fromEntries(Object.entries(globalMapping).map(([key, value]) => [value, key]));
+            const fromPos = isForward ? globalPosG1 : globalPosG2;
+            const toPos = isForward ? globalPosG2 : globalPosG1;
+
+            // Start the animation
+            await animateIsomorphism(fromPos, toPos, directionMapping);
+
+            isForward = !isForward;
+
+            // Re-enable the button after animation
+            playButton.disabled = false;
+            playButton.style.opacity = "1";
+        };
+
+        buttonContainer.appendChild(playButton);
+        animationContainer.appendChild(buttonContainer);
+    }
+
     function saveCanvas(target) {
         let previousSelected = selectedVertex;
         selectedVertex = null;
@@ -205,11 +373,19 @@ print("Python environment loaded.")
             if (target === "G1") {
                 G1_vertices = JSON.parse(JSON.stringify(vertices));
                 G1_edges = JSON.parse(JSON.stringify(edges));
+                drawSavedGraph(targetCanvas, undefined, undefined, true)
             } else if (target === "G2") {
                 G2_vertices = JSON.parse(JSON.stringify(vertices));
                 G2_edges = JSON.parse(JSON.stringify(edges));
+                drawSavedGraph(targetCanvas, undefined, undefined, false)
             }
         });
+
+        // Hide the animation container upon saving G1 or G2
+        const animationContainer = document.getElementById("animationContainer");
+        if (animationContainer) {
+            animationContainer.style.display = "none";
+        }
     }
 
     // Run code in python
@@ -234,9 +410,14 @@ print("Python environment loaded.")
 
                     document.getElementById("output").innerText =
                         "Graphs are isomorphic!\n\nIsomorphic Mapping:\n" + formattedMapping;
+
+                    isForward = true;
+                    animationContainer.style.display = "block";
+                    animateIsomorphism(G1_vertices, G2_vertices, isomorphismMapping, true);
                 } else {
                     isomorphismMapping = null;
                     document.getElementById("output").innerText = "Graphs are NOT isomorphic.";
+                    animationContainer.style.display = "none";
                 }
 
                 if (checkIsomorphismBtn) {
