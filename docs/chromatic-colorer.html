@@ -1,0 +1,507 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Isomorphic Graph Drawer</title>
+    <script src="https://cdn.jsdelivr.net/pyodide/v0.23.4/full/pyodide.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/animejs/3.2.1/anime.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/web-animations-js@2.3.2/web-animations.min.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            text-align: center;
+            background-color: #f4f4f4;
+            margin: 0;
+            padding: 20px;
+        }
+        h2 {
+            color: #333;
+        }
+        .container {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 10px;
+        }
+        canvas {
+            background-color: white;
+            border: 2px solid black;
+            cursor: pointer;
+            touch-action: none;
+        }
+        .button-container {
+            display: flex;
+            gap: 10px;
+            margin-top: 10px;
+        }
+        button {
+            padding: 10px 15px;
+            border: none;
+            cursor: pointer;
+            font-size: 14px;
+            border-radius: 5px;
+            background-color: #007BFF;
+            color: white;
+        }
+        button:hover {
+            background-color: #0056b3;
+        }
+        button:disabled {
+            cursor: not-allowed;
+        }
+        pre {
+            background-color: #fff;
+            padding: 10px;
+            border-radius: 5px;
+            text-align: left;
+            width: 80%;
+            max-width: 600px;
+        }
+    </style>
+</head>
+<body>
+
+<h2>Chromatic Colorer</h2>
+
+<div class="container">
+    <canvas id="graphCanvas" width="800" height="500"></canvas>
+    <div class="button-container">
+        <button onclick="runPython('clear_graph')">Clear Graph</button>
+        <button id="checkIsomorphismBtn" onclick="runPython('compute_coloring_info')">Compute Tight Bound</button>
+        <button onclick="recolorWithStrategy('random_sequential')">Recolor Vertices</button>
+        <button onclick="deleteVertex()">Delete Vertex</button>
+        <button onclick="undoAction()">Undo</button>
+        <button onclick="redoAction()">Redo</button>
+    </div>
+    <pre id="output"></pre>
+    <div id="animationContainer" style="margin-top:20px;"></div>
+
+    <div id="loadingOverlay" style="
+    position: fixed;
+    top: 0; left: 0;
+    width: 100%; height: 100%;
+    background-color: rgba(255, 255, 255, 0.85);
+    z-index: 1000;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    font-size: 24px;
+    color: #333;
+    font-weight: bold;
+    font-family: Arial, sans-serif;
+    ">
+        Loading... Please wait
+    </div>
+</div>
+
+<script>
+    let pyodideReady = false;
+    let vertices = [];
+    let edges = [];
+    let selectedVertex = null;
+    let draggingVertex = null;
+    let startX = 0, startY = 0, hasMoved = false;
+    let isomorphismMapping = null;
+    let hoveredVertex = null;
+    let canvas = document.getElementById("graphCanvas");
+    let undoStack = [];
+    let redoStack = [];
+    const MAX_UNDO = 100;
+    let vertexColors = {};
+    let previousColors = {};
+    const colorPalette = [
+        "#FF595E", "#FFCA3A", "#8AC926", "#1982C4", "#6A4C93",
+        "#FF9F1C", "#D7263D", "#3F88C5", "#F49D37", "#A1C181"
+    ];
+
+    loadPyodideAndPackages();
+
+    async function loadPyodideAndPackages() {
+        window.pyodide = await loadPyodide();
+        await pyodide.loadPackage(["networkx"]);
+        await pyodide.runPythonAsync(`
+import networkx as nx
+import json
+
+vertices = []
+edges = []
+GM = None
+
+def clear_graph():
+    global vertices, edges
+    vertices = []
+    edges = []
+    print("Graph cleared.")
+
+def sync_graph_to_python(js_vertices, js_edges):
+    global vertices, edges
+    vertices = js_vertices
+    edges = js_edges
+
+def compute_coloring_info(strategy="largest_first"):
+    G = nx.Graph()
+
+    for i, (x, y) in enumerate(vertices):
+        G.add_node(i)
+
+    for i, j in edges:
+        G.add_edge(i, j)
+
+    if len(G.nodes) == 0:
+        return json.dumps({
+            "message": "Graph is empty.",
+            "coloring": {},
+            "chromatic_number": 0,
+            "max_degree": 0,
+            "inequality_holds": True
+        })
+
+    coloring = nx.coloring.greedy_color(G, strategy=strategy)
+    chromatic_number = max(coloring.values()) + 1 if coloring else 0
+    max_degree = max(dict(G.degree()).values()) if G.nodes else 0
+
+    return json.dumps({
+        "message": f"χ(G) = {chromatic_number}, Δ(G) = {max_degree}, χ(G) ≤ Δ(G)+1: {chromatic_number <= max_degree + 1}",
+        "coloring": coloring,
+        "chromatic_number": chromatic_number,
+        "max_degree": max_degree,
+        "inequality_holds": chromatic_number <= max_degree + 1
+    })
+
+print("Python environment loaded.")
+        `);
+        pyodideReady = true;
+        document.getElementById("loadingOverlay").style.display = "none";
+    }
+
+    async function recolorWithStrategy(strategy) {
+        if (!pyodideReady) return;
+        await syncGraphToPython();
+        const result = await pyodide.runPythonAsync(`compute_coloring_info('${strategy}')`);
+        const parsed = JSON.parse(result);
+
+        vertexColors = parsed.coloring || {};
+        previousColors = { ...vertexColors };
+        document.getElementById("output").innerText = parsed.message;
+        drawGraph();
+    }
+
+    // Run code in python
+    async function runPython(command, arg = undefined) {
+        if (!pyodideReady) return alert("Python is still loading...");
+        let commandStr = arg !== undefined ? `${command}('${arg}')` : `${command}()`;
+        try {
+            let result = await pyodide.runPythonAsync(commandStr);
+
+            document.getElementById("output").innerText = result || "Command executed.";
+
+            if (command == "compute_coloring_info") {
+                alert("TODO");
+                document.getElementById("output").innerText = "Command executed.";
+            }
+
+            if (command === "clear_graph") {
+                saveUndoState();
+                vertices = [];
+                edges = [];
+                selectedVertex = null;
+                drawGraph();
+            }
+        } catch (err) {
+            document.getElementById("output").innerText = "Error: " + err;
+        }
+    }
+
+    async function syncGraphToPython() {
+        if (!pyodideReady) return;
+        await pyodide.runPythonAsync(`sync_graph_to_python(${JSON.stringify(vertices)}, ${JSON.stringify(edges)})`);
+    }
+
+    async function updateColoringInfo() {
+        if (!pyodideReady) return;
+        await syncGraphToPython();
+        const result = await pyodide.runPythonAsync("compute_coloring_info()");
+        const parsed = JSON.parse(result);
+
+        const newColors = parsed.coloring || {};
+
+        for (let v in newColors) {
+            if (vertexColors[v] !== newColors[v]) {
+                vertexColors[v] = newColors[v];
+            }
+        }
+
+        previousColors = { ...vertexColors };
+
+        document.getElementById("output").innerText = parsed.message;
+        drawGraph();
+    }
+
+    // Function for dragging vertices in the main canvas
+    function dragVertex(event) {
+        let rect = canvas.getBoundingClientRect();
+        let x = event.clientX - rect.left;
+        let y = event.clientY - rect.top;
+
+        if (draggingVertex !== null) {
+            vertices[draggingVertex] = [x, y];
+            hasMoved = true;
+            drawGraph();
+        }
+    }
+
+    function handleMouseUp(event) {
+        canvas.removeEventListener("mousemove", dragVertex);
+
+        if (!hasMoved) {
+            let rect = canvas.getBoundingClientRect();
+            let x = event.clientX - rect.left;
+            let y = event.clientY - rect.top;
+            let nearest = findNearestVertex(x, y);
+
+            if (nearest !== null) {
+                if (nearest === selectedVertex) {
+                    // If clicking the already selected vertex, unselect it
+                    selectedVertex = null;
+                } else if (selectedVertex === null) {
+                    // If no vertex was selected, select this one
+                    selectedVertex = nearest;
+                } else {
+                    // If selecting a different vertex, check for an existing edge
+                    let edgeIndex = edges.findIndex(([a, b]) =>
+                        (a === selectedVertex && b === nearest) || (b === selectedVertex && a === nearest)
+                    );
+
+                    if (edgeIndex !== -1) {
+                        edges.splice(edgeIndex, 1);  // Remove edge if it exists
+                    } else {
+                        edges.push([selectedVertex, nearest]); // Create edge if it doesn't exist
+                    }
+
+                    selectedVertex = nearest;
+                }
+            }
+        }
+        draggingVertex = null;
+        drawGraph();
+        updateColoringInfo();
+    }
+
+    function undoAction() {
+        if (undoStack.length === 0) return;
+
+        // Save current state to redo stack
+        redoStack.push({
+            vertices: JSON.parse(JSON.stringify(vertices)),
+            edges: JSON.parse(JSON.stringify(edges)),
+            selectedVertex: selectedVertex
+        });
+
+        // Restore last undo state
+        const lastState = undoStack.pop();
+        vertices = lastState.vertices;
+        edges = lastState.edges;
+        selectedVertex = lastState.selectedVertex;
+        drawGraph();
+        syncGraphToPython();
+        updateColoringInfo();
+    }
+
+    function redoAction() {
+        if (redoStack.length === 0) return;
+
+        // Save current state to undo stack
+        undoStack.push({
+            vertices: JSON.parse(JSON.stringify(vertices)),
+            edges: JSON.parse(JSON.stringify(edges)),
+            selectedVertex: selectedVertex
+        });
+
+        // Restore last redo state
+        const lastState = redoStack.pop();
+        vertices = lastState.vertices;
+        edges = lastState.edges;
+        selectedVertex = lastState.selectedVertex;
+        drawGraph();
+        syncGraphToPython();
+        updateColoringInfo();
+    }
+
+    function deleteVertex() {
+        if (selectedVertex === null) {
+            alert("No vertex selected for deletion.");
+            return;
+        }
+
+        saveUndoState();
+
+        // Remove all edges associated with the selected vertex
+        edges = edges.filter(([a, b]) => a !== selectedVertex && b !== selectedVertex);
+
+        // Remove the selected vertex from the list
+        vertices.splice(selectedVertex, 1);
+
+        // Update all edges to reflect the removed vertex label
+        edges = edges.map(([a, b]) => [
+            a > selectedVertex ? a - 1 : a,
+            b > selectedVertex ? b - 1 : b
+        ]);
+
+        // Reset the selected vertex after deletion
+        selectedVertex = null;
+
+        // Redraw the graph after deletion
+        drawGraph();
+        syncGraphToPython();
+        updateColoringInfo();
+    }
+
+    // Used to find the nearest vertex in the main canvas relative to the mouse
+    function findNearestVertex(x, y) {
+        for (let i = 0; i < vertices.length; i++) {
+            let [vx, vy] = vertices[i];
+            if (Math.sqrt((vx - x) ** 2 + (vy - y) ** 2) < 10) {
+                return i;
+            }
+        }
+        return null;
+    }
+
+    function saveUndoState() {
+        // Only push if state actually changed
+        undoStack.push({
+            vertices: JSON.parse(JSON.stringify(vertices)),
+            edges: JSON.parse(JSON.stringify(edges)),
+            selectedVertex: selectedVertex
+        });
+
+        if (undoStack.length > MAX_UNDO) {
+            undoStack.shift();
+        }
+
+        // Clear redo stack on new action
+        redoStack = [];
+    }
+
+    // Handles drawing the main canvas
+    function drawGraph() {
+        let ctx = canvas.getContext("2d");
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        let highlightedEdges = new Set();
+
+        // Highlight edges connected to hoveredVertex
+        if (hoveredVertex !== null) {
+            highlightedEdges.clear(); // Clear previous highlights
+            let mappedVertex = null;
+
+            if (isomorphismMapping) {
+                // Check forward mapping (G1 -> G2)
+                if (isomorphismMapping[hoveredVertex] !== undefined) {
+                    mappedVertex = isomorphismMapping[hoveredVertex];
+                } else {
+                    // Check reverse mapping (G2 -> G1)
+                    for (const [key, value] of Object.entries(isomorphismMapping)) {
+                        if (parseInt(value) === hoveredVertex) {
+                            mappedVertex = parseInt(key);
+                            break;
+                        }
+                    }
+                }
+            }
+
+            // Highlight edges connected to the hovered vertex
+            edges.forEach(([i, j]) => {
+                if (i === hoveredVertex || j === hoveredVertex) {
+                    highlightedEdges.add(`${i}-${j}`);
+                    highlightedEdges.add(`${j}-${i}`);
+                }
+            });
+
+            // Highlight edges connected to the mapped vertex (if any)
+            if (mappedVertex !== null) {
+                edges.forEach(([i, j]) => {
+                    if (i === mappedVertex || j === mappedVertex) {
+                        highlightedEdges.add(`${i}-${j}`);
+                        highlightedEdges.add(`${j}-${i}`);
+                    }
+                });
+            }
+        }
+
+        // Draw edges
+        edges.forEach(([i, j]) => {
+            const edgeKey1 = `${i}-${j}`;
+            const edgeKey2 = `${j}-${i}`;
+            const isHighlighted = highlightedEdges.has(edgeKey1) || highlightedEdges.has(edgeKey2);
+
+            ctx.strokeStyle = isHighlighted ? "lightblue" : "black";
+            ctx.lineWidth = isHighlighted ? 4 : 2;
+            let [x1, y1] = vertices[i];
+            let [x2, y2] = vertices[j];
+            ctx.beginPath();
+            ctx.moveTo(x1, y1);
+            ctx.lineTo(x2, y2);
+            ctx.stroke();
+        });
+
+        vertices.forEach(([x, y], i) => {
+            const colorIndex = vertexColors[i] ?? -1;
+            const fillColor = colorIndex >= 0 ? colorPalette[colorIndex % colorPalette.length] : "black";
+
+            // Draw the colored vertex
+            ctx.beginPath();
+            ctx.arc(x, y, 8, 0, 2 * Math.PI);
+            ctx.fillStyle = fillColor;
+            ctx.fill();
+
+            // If selected, draw a hollow circle around it
+            if (i === selectedVertex) {
+                ctx.beginPath();
+                ctx.arc(x, y, 12, 0, 2 * Math.PI);
+                ctx.lineWidth = 2;
+                ctx.strokeStyle = "black";
+                ctx.stroke();
+            }
+
+            // Draw vertex index number
+            ctx.fillStyle = "black";
+            ctx.font = "15px Arial";
+            ctx.fillText(i, x + 10, y + 5);
+        });
+    }
+
+    // ------------------ Main Canvas Events ------------------ \\
+
+    canvas.addEventListener("mousedown", function (event) {
+        saveUndoState();
+        let rect = canvas.getBoundingClientRect();
+        let x = event.clientX - rect.left;
+        let y = event.clientY - rect.top;
+
+        let nearest = findNearestVertex(x, y);
+        hasMoved = false;
+
+        if (nearest !== null) {
+            draggingVertex = nearest;
+            startX = vertices[nearest][0];
+            startY = vertices[nearest][1];
+
+            canvas.addEventListener("mousemove", dragVertex);
+            canvas.addEventListener("mouseup", handleMouseUp);
+        } else {
+            vertices.push([x, y]);
+            selectedVertex = vertices.length - 1;
+            syncGraphToPython();
+            drawGraph();
+            updateColoringInfo();
+
+            // STOP handleMouseUp() from running after creating a vertex
+            canvas.removeEventListener("mouseup", handleMouseUp);
+        }
+    });
+
+</script>
+</body>
+</html>
