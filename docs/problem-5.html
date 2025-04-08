@@ -7542,7 +7542,7 @@ a.anchor-link {
     <span class="n">num_colors_used</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="nb">set</span><span class="p">(</span><span class="n">coloring</span><span class="o">.</span><span class="n">values</span><span class="p">()))</span>
     <span class="n">max_degree</span> <span class="o">=</span> <span class="nb">max</span><span class="p">(</span><span class="nb">dict</span><span class="p">(</span><span class="n">G</span><span class="o">.</span><span class="n">degree</span><span class="p">())</span><span class="o">.</span><span class="n">values</span><span class="p">())</span>
 
-    <span class="c1"># Print the coloring and properties of the graph</span>
+    <span class="c1"># Print the coloring and properties of the graph.</span>
     <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"Generated Graph: χ(G) = </span><span class="si">{</span><span class="n">num_colors_used</span><span class="si">}</span><span class="s2">, Δ(G) = </span><span class="si">{</span><span class="n">max_degree</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
     <span class="nb">print</span><span class="p">(</span><span class="s2">"Node Coloring:"</span><span class="p">)</span>
     <span class="k">for</span> <span class="n">node</span><span class="p">,</span> <span class="n">color</span> <span class="ow">in</span> <span class="n">coloring</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
