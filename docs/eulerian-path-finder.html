@@ -1,4 +1,3 @@
-<button onclick="location.href='index.html'">Back to Index</button><br><br>
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -178,6 +177,46 @@ def find_all_eulerian_circuits():
 
     return json.dumps(all_circuits)
 
+def explain_why_no_eulerian_path():
+    G = nx.Graph()
+    for i, (x, y) in enumerate(vertices):
+        G.add_node(i)
+    for u, v in edges:
+        G.add_edge(u, v)
+
+    if not nx.is_connected(G):
+        components = list(nx.connected_components(G))
+        return f"The graph is disconnected with {len(components)} components: {components}.\\n" \\
+               "A graph must be connected to have an Eulerian path."
+
+    odd_degree_nodes = [n for n in G.nodes if G.degree(n) % 2 == 1]
+    if len(odd_degree_nodes) == 0:
+        return "The graph is connected and all vertices have even degree — it has an Eulerian circuit, which also counts as a path."
+    elif len(odd_degree_nodes) == 2:
+        return f"The graph is connected and has exactly two odd-degree vertices: {odd_degree_nodes} — it has an Eulerian path."
+    else:
+        return f"The graph is connected but has {len(odd_degree_nodes)} odd-degree vertices: {odd_degree_nodes}.\\n" \\
+               "A graph must have exactly 0 or 2 odd-degree vertices to have an Eulerian path."
+
+def explain_why_no_eulerian_circuit():
+    G = nx.Graph()
+    for i, (x, y) in enumerate(vertices):
+        G.add_node(i)
+    for u, v in edges:
+        G.add_edge(u, v)
+
+    if not nx.is_connected(G):
+        components = list(nx.connected_components(G))
+        return f"The graph is disconnected with {len(components)} components: {components}.\\n" \\
+               "A graph must be connected to have an Eulerian circuit."
+
+    odd_degree_nodes = [n for n in G.nodes if G.degree(n) % 2 == 1]
+    if len(odd_degree_nodes) == 0:
+        return "The graph is connected and all vertices have even degree — it has an Eulerian circuit."
+    else:
+        return f"The graph is connected but has {len(odd_degree_nodes)} odd-degree vertices: {odd_degree_nodes}.\\n" \\
+               "A graph must have all vertices of even degree to have an Eulerian circuit."
+
 def find_all_eulerian_paths():
     G = nx.Graph()
     for i, (x, y) in enumerate(vertices):
@@ -320,23 +359,61 @@ print("Python environment loaded.")
     displayEulerian(eulerianIndex);
   }
 
+  async function findAllEulerianPaths() {
+    if (vertices.length === 0 && edges.length === 0) {
+      document.getElementById("output").innerText = "Graph is empty.";
+      return;
+    }
+
+    document.getElementById("output").innerText = "Calculating...";
+
+    await syncGraphToPython();
+    const result = await pyodide.runPythonAsync("find_all_eulerian_paths()");
+    eulerianResults = JSON.parse(result);
+    eulerianIndex = 0;
+    eulerianMode = "path"
+
+    document.getElementById("output").innerText = "";
+
+    if (eulerianResults.length === 0) {
+      const reason = await pyodide.runPythonAsync("explain_why_no_eulerian_path()");
+      document.getElementById("output").innerText = "No Eulerian path found.\n\n" + reason;
+    }
+    else {
+      displayEulerian(eulerianIndex);
+    }
+
+    const overlay = document.getElementById("loadingOverlay");
+    overlay.style.display = "none";
+    overlay.innerText = "Loading... Please wait"; 
+  }
+
   async function findAllEulerianCircuits() {
+    if (vertices.length === 0 && edges.length === 0) {
+      document.getElementById("output").innerText = "Graph is empty.";
+      return;
+    }
+
+    document.getElementById("output").innerText = "Calculating...";
+
     await syncGraphToPython();
     const result = await pyodide.runPythonAsync("find_all_eulerian_circuits()");
     eulerianResults = JSON.parse(result);
     eulerianIndex = 0;
     eulerianMode = "circuit";
-    displayEulerian(eulerianIndex);
+
+    document.getElementById("output").innerText = "";
+
+    if (eulerianResults.length === 0) {
+      const reason = await pyodide.runPythonAsync("explain_why_no_eulerian_circuit()");
+      document.getElementById("output").innerText = "No Eulerian circuit found.\n\n" + reason;
+    }
+    else {
+      displayEulerian(eulerianIndex);
+    }
   }
 
-  async function findAllEulerianPaths() {
-    await syncGraphToPython();
-    const result = await pyodide.runPythonAsync("find_all_eulerian_paths()");
-    eulerianResults = JSON.parse(result);
-    eulerianIndex = 0;
-    eulerianMode = "path";
-    displayEulerian(eulerianIndex);
-  }
+
 
 
   // Function for dragging vertices in the main canvas
