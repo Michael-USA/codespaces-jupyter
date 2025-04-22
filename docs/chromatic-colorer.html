@@ -1,10 +1,9 @@
-<button onclick="location.href='index.html'">Back to Index</button><br><br>
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Isomorphic Graph Drawer</title>
+    <title>Chromatic Colorer</title>
     <script src="https://cdn.jsdelivr.net/pyodide/v0.23.4/full/pyodide.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/animejs/3.2.1/anime.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/web-animations-js@2.3.2/web-animations.min.js"></script>
@@ -69,7 +68,7 @@
     <canvas id="graphCanvas" width="800" height="500"></canvas>
     <div class="button-container">
         <button onclick="runPython('clear_graph')">Clear Graph</button>
-        <button id="checkIsomorphismBtn" onclick="runPython('compute_coloring_info')">Compute Tight Bound</button>
+        <button id="explainTightBoundBtn" onclick="explainTightBound()">Explain Tight Bound</button>
         <button onclick="recolorWithStrategy('random_sequential')">Recolor Vertices</button>
         <button onclick="deleteVertex()">Delete Vertex</button>
         <button onclick="undoAction()">Undo</button>
@@ -161,13 +160,83 @@ def compute_coloring_info(strategy="largest_first"):
     coloring = nx.coloring.greedy_color(G, strategy=strategy)
     chromatic_number = max(coloring.values()) + 1 if coloring else 0
     max_degree = max(dict(G.degree()).values()) if G.nodes else 0
+    is_connected = nx.is_connected(G)
+    tight = is_connected and (len(vertices) >= 2) and (chromatic_number == max_degree + 1)
 
     return json.dumps({
         "message": f"χ(G) = {chromatic_number}, Δ(G) = {max_degree}, χ(G) ≤ Δ(G)+1: {chromatic_number <= max_degree + 1}",
         "coloring": coloring,
         "chromatic_number": chromatic_number,
         "max_degree": max_degree,
-        "inequality_holds": chromatic_number <= max_degree + 1
+        "inequality_holds": chromatic_number <= max_degree + 1,
+        "tight": tight
+    })
+
+def analyze_tightness_reason():
+    import networkx as nx
+    import json
+
+    G = nx.Graph()
+    for i, (x, y) in enumerate(vertices):
+        G.add_node(i)
+    for i, j in edges:
+        G.add_edge(i, j)
+
+    if G.number_of_nodes() < 2:
+        return json.dumps({
+            "tight": False,
+            "reason": None,
+            "highlight": [],
+            "message": "Graph too small to analyze tightness."
+        })
+
+    coloring = nx.coloring.greedy_color(G, strategy="largest_first")
+    chromatic_number = max(coloring.values()) + 1
+    degrees = dict(G.degree())
+    max_degree = max(degrees.values())
+    n = G.number_of_nodes()
+
+    if chromatic_number != max_degree + 1:
+        return json.dumps({
+            "tight": False,
+            "reason": None,
+            "highlight": [],
+            "message": f"χ(G) = {chromatic_number}, Δ(G) = {max_degree}. Not a tight bound."
+        })
+
+    # Check if graph is an odd cycle
+    is_odd_cycle = (
+    nx.is_connected(G)
+    and len(G.nodes) == len(G.edges)
+    and all(deg == 2 for _, deg in G.degree())
+    and len(G.nodes) % 2 == 1)
+
+    if is_odd_cycle:
+        return json.dumps({
+            "tight": True,
+            "reason": "odd_cycle",
+            "highlight": list(G.nodes()),
+            "message": f"The graph is an odd cycle C{n}, which forces χ(G) = Δ(G) + 1."
+        })
+
+    # Check if the graph is a complete graph
+    is_complete = nx.is_connected(G) and n >= 2 and G.number_of_edges() == n * (n - 1) // 2
+
+    if is_complete:
+        return json.dumps({
+            "tight": True,
+            "reason": "complete_graph",
+            "highlight": list(G.nodes()),
+            "message": f"The graph is a complete graph K{n}, which forces χ(G) = Δ(G) + 1."
+        })
+
+    # If for some reason the graph is tight, but is not an odd cycle or complete graph,
+    # return a message stating so.
+    return json.dumps({
+        "tight": True,
+        "reason": "unknown",
+        "highlight": [],
+        "message": "χ(G) = Δ(G)+1, but no known structure was detected to explain it."
     })
 
 print("Python environment loaded.")
@@ -197,10 +266,17 @@ print("Python environment loaded.")
 
             document.getElementById("output").innerText = result || "Command executed.";
 
-            if (command == "compute_coloring_info") {
-                alert("TODO");
-                document.getElementById("output").innerText = "Command executed.";
+            if (command === "compute_tight_coloring") {
+                const parsed = JSON.parse(result);
+
+                vertexColors = parsed.coloring || {};
+                previousColors = { ...vertexColors };
+
+                document.getElementById("output").innerText = parsed.message;
+                drawGraph();
+                return;
             }
+
 
             if (command === "clear_graph") {
                 saveUndoState();
@@ -219,13 +295,46 @@ print("Python environment loaded.")
         await pyodide.runPythonAsync(`sync_graph_to_python(${JSON.stringify(vertices)}, ${JSON.stringify(edges)})`);
     }
 
+    async function explainTightBound() {
+        if (!pyodideReady) return;
+
+        await syncGraphToPython();
+        const result = await pyodide.runPythonAsync("analyze_tightness_reason()");
+        const parsed = JSON.parse(result);
+
+        const explainBtn = document.getElementById("explainTightBoundBtn");
+        explainBtn.disabled = !parsed.tight;
+
+        document.getElementById("output").innerText = parsed.message;
+
+        if (parsed.highlight.length > 0) {
+            highlightVertices(parsed.highlight);
+        }
+    }
+
+    function highlightVertices(nodeIndices) {
+        let ctx = canvas.getContext("2d");
+        drawGraph(); // first draw normally
+        ctx.strokeStyle = "orange";
+        ctx.lineWidth = 4;
+        for (let i of nodeIndices) {
+            let [x, y] = vertices[i];
+            ctx.beginPath();
+            ctx.arc(x, y, 14, 0, 2 * Math.PI);
+            ctx.stroke();
+        }
+    }
+
     async function updateColoringInfo() {
         if (!pyodideReady) return;
         await syncGraphToPython();
         const result = await pyodide.runPythonAsync("compute_coloring_info()");
         const parsed = JSON.parse(result);
-
+        const explainBtn = document.getElementById("explainTightBoundBtn");
         const newColors = parsed.coloring || {};
+
+        explainBtn.disabled = !parsed.tight;
+        explainBtn.style.opacity = parsed.tight ? "1.0" : "0.5";
 
         for (let v in newColors) {
             if (vertexColors[v] !== newColors[v]) {
@@ -281,12 +390,15 @@ print("Python environment loaded.")
                     }
 
                     selectedVertex = nearest;
+                    updateColoringInfo();
                 }
             }
         }
+        else {
+
+        }
         draggingVertex = null;
         drawGraph();
-        updateColoringInfo();
     }
 
     function undoAction() {
