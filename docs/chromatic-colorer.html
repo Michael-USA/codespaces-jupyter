@@ -1,4 +1,3 @@
-<button onclick="location.href='index.html'">Back to Index</button><br><br>
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -128,6 +127,7 @@ import json
 vertices = []
 edges = []
 GM = None
+coloring = {}
 
 def clear_graph():
     global vertices, edges
@@ -141,6 +141,7 @@ def sync_graph_to_python(js_vertices, js_edges):
     edges = js_edges
 
 def compute_coloring_info(strategy="largest_first"):
+    global coloring
     G = nx.Graph()
 
     for i, (x, y) in enumerate(vertices):
@@ -150,6 +151,7 @@ def compute_coloring_info(strategy="largest_first"):
         G.add_edge(i, j)
 
     if len(G.nodes) == 0:
+        coloring = {}
         return json.dumps({
             "message": "Graph is empty.",
             "coloring": {},
@@ -173,6 +175,20 @@ def compute_coloring_info(strategy="largest_first"):
         "tight": tight
     })
 
+def get_edge_list():
+    return json.dumps({"edges": edges})
+
+def exact_chromatic_number(G):
+    import itertools
+
+    n = len(G.nodes)
+    for k in range(1, n + 1):
+        for coloring in itertools.product(range(k), repeat=n):
+            color_map = dict(zip(G.nodes, coloring))
+            if all(color_map[u] != color_map[v] for u, v in G.edges):
+                return k
+    return n  # worst-case
+
 def analyze_tightness_reason():
     import networkx as nx
     import json
@@ -186,59 +202,100 @@ def analyze_tightness_reason():
     if G.number_of_nodes() < 2:
         return json.dumps({
             "tight": False,
-            "reason": None,
+            "reason": "too_small",
             "highlight": [],
             "message": "Graph too small to analyze tightness."
         })
 
-    coloring = nx.coloring.greedy_color(G, strategy="largest_first")
-    chromatic_number = max(coloring.values()) + 1
+    if not nx.is_connected(G):
+        return json.dumps({
+            "tight": False,
+            "reason": "disconnected",
+            "highlight": [],
+            "message": "Graph is not connected. Must be a connected graph to explain tightness."
+        })
+
+    print(f"{coloring.values()}")
+    chromatic_number = max(coloring.values()) + 1 if coloring else 0
     degrees = dict(G.degree())
     max_degree = max(degrees.values())
+    max_degree_vertices = [str(v) for v, deg in degrees.items() if deg == max_degree]
     n = G.number_of_nodes()
+
+    if len(max_degree_vertices) == 1:
+        max_degree_detail = f"(at vertex {max_degree_vertices[0]})"
+    elif len(max_degree_vertices) == 2:
+        max_degree_detail = f"(at vertices {max_degree_vertices[0]} and {max_degree_vertices[1]})"
+    elif len(max_degree_vertices) == 3:
+        max_degree_detail = f"(at vertices {max_degree_vertices[0]}, {max_degree_vertices[1]}, and {max_degree_vertices[2]})"
+    elif len(max_degree_vertices) == 4:
+        max_degree_detail = f"(at vertices {max_degree_vertices[0]}, {max_degree_vertices[1]}, {max_degree_vertices[2]}, and {max_degree_vertices[3]})"
+    else:
+        max_degree_detail = "(at several vertices)"
 
     if chromatic_number != max_degree + 1:
         return json.dumps({
             "tight": False,
-            "reason": None,
+            "reason": "not_tight",
             "highlight": [],
-            "message": f"χ(G) = {chromatic_number}, Δ(G) = {max_degree}. Not a tight bound."
+            "message": f"""χ(G) = {chromatic_number}, Δ(G) = {max_degree} {max_degree_detail}.
+Not tight because fewer than Δ(G)+1 colors were sufficient."""
         })
 
     # Check if graph is an odd cycle
     is_odd_cycle = (
-    nx.is_connected(G)
-    and len(G.nodes) == len(G.edges)
-    and all(deg == 2 for _, deg in G.degree())
-    and len(G.nodes) % 2 == 1)
+        nx.is_connected(G)
+        and len(G.nodes) == len(G.edges)
+        and all(deg == 2 for _, deg in G.degree())
+        and len(G.nodes) % 2 == 1
+    )
 
     if is_odd_cycle:
         return json.dumps({
             "tight": True,
             "reason": "odd_cycle",
             "highlight": list(G.nodes()),
-            "message": f"The graph is an odd cycle C{n}, which forces χ(G) = Δ(G) + 1."
+            "message": f"""χ(G) = {chromatic_number}, Δ(G) = {max_degree} {max_degree_detail}.
+The graph is an odd cycle C{n}, which forces χ(G) = Δ(G) + 1."""
         })
 
     # Check if the graph is a complete graph
-    is_complete = nx.is_connected(G) and n >= 2 and G.number_of_edges() == n * (n - 1) // 2
+    is_complete = (
+        nx.is_connected(G)
+        and n >= 2
+        and G.number_of_edges() == n * (n - 1) // 2
+    )
 
     if is_complete:
         return json.dumps({
             "tight": True,
             "reason": "complete_graph",
             "highlight": list(G.nodes()),
-            "message": f"The graph is a complete graph K{n}, which forces χ(G) = Δ(G) + 1."
+            "message": f"""χ(G) = {chromatic_number}, Δ(G) = {max_degree} {max_degree_detail}.
+The graph is a complete graph K{n}, which forces χ(G) = Δ(G) + 1."""
         })
 
-    # If for some reason the graph is tight, but is not an odd cycle or complete graph,
-    # return a message stating so.
+    # If it's tight but no known structure was matched, use an exact algorithm to confirm χ(G)
+    true_chi = exact_chromatic_number(G)
+
+    if true_chi != chromatic_number:
+        return json.dumps({
+            "tight": False,
+            "reason": "greedy_overestimate",
+            "highlight": [],
+            "message": f"""χ(G) = {chromatic_number}, Δ(G) = {max_degree} {max_degree_detail}.
+Greedy coloring used {chromatic_number} colors, but the true chromatic number is {true_chi}. Not a tight bound."""
+        })
+
     return json.dumps({
         "tight": True,
-        "reason": "unknown",
+        "reason": "confirmed_by_exact_solver",
         "highlight": [],
-        "message": "χ(G) = Δ(G)+1, but no known structure was detected to explain it."
+        "message": f"""χ(G) = {chromatic_number}, Δ(G) = {max_degree} {max_degree_detail}.
+Tight bound confirmed by exact coloring. Reason unknown."""
     })
+
+
 
 print("Python environment loaded.")
         `);
@@ -303,9 +360,6 @@ print("Python environment loaded.")
         const result = await pyodide.runPythonAsync("analyze_tightness_reason()");
         const parsed = JSON.parse(result);
 
-        const explainBtn = document.getElementById("explainTightBoundBtn");
-        explainBtn.disabled = !parsed.tight;
-
         document.getElementById("output").innerText = parsed.message;
 
         if (parsed.highlight.length > 0) {
@@ -331,11 +385,7 @@ print("Python environment loaded.")
         await syncGraphToPython();
         const result = await pyodide.runPythonAsync("compute_coloring_info()");
         const parsed = JSON.parse(result);
-        const explainBtn = document.getElementById("explainTightBoundBtn");
         const newColors = parsed.coloring || {};
-
-        explainBtn.disabled = !parsed.tight;
-        explainBtn.style.opacity = parsed.tight ? "1.0" : "0.5";
 
         for (let v in newColors) {
             if (vertexColors[v] !== newColors[v]) {
